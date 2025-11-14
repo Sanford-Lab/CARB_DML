@@ -34,3 +34,7 @@ Update this README as the repository structure and workflow evolve. yay.
 
 ## Analysis Files
 
+## To Do List
+
+- [ ] Create a to do list
+
