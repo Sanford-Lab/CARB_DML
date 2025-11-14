@@ -27,5 +27,5 @@ Add additional subdirectories (e.g., `code/models/`, `writing/figures/`) as the 
 2. Configure GitHub credentials (Keychain helper is already enabled on this machine).
 3. Add any initial scripts or documentation, then `git add`, `git commit`, and `git push origin <branch>`.
 
-Update this README as the repository structure and workflow evolve.
+Update this README as the repository structure and workflow evolve. yay.
 
