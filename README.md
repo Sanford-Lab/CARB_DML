@@ -9,7 +9,7 @@ Working repo for the Sanford Lab CARB project. The repo is currently a clean sla
 - `writing/` – manuscripts, memos, slide decks, or other narrative artifacts tied to the project.
 - `README.md` – project orientation, collaboration norms (this file).
 
-Add additional subdirectories (e.g., `code/models/`, `writing/figures/`) as the project grows; keep sensitive or bulky assets under `data/` unless they are safe to version.
+Add additional subdirectories (e.g., `code/cleaning/`, `writing/figures/`) as the project grows; keep sensitive or bulky assets under `data/` unless they are safe to version.
 
 ## Git & Collaboration Workflow
 
@@ -28,4 +28,9 @@ Add additional subdirectories (e.g., `code/models/`, `writing/figures/`) as the 
 3. Add any initial scripts or documentation, then `git add`, `git commit`, and `git push origin <branch>`.
 
 Update this README as the repository structure and workflow evolve. yay.
+
+## Cleaning Files 
+
+
+## Analysis Files
 
