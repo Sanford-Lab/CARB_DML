@@ -393,7 +393,7 @@ dml.runner.for.didclust.new.baselinestr <- function(dat.list.to.use, cov.to.use,
   
   #Addition 251123:
     # Dropped "difference with baseline" and "difference with baseline" vars thing
-    # Will just allow the difference with baseline and the original value itself
+    # Seemed very superfluous
   
   #Addition 240810:
   #This function is strictly for DID cluster method
@@ -417,7 +417,7 @@ dml.runner.for.didclust.new.baselinestr <- function(dat.list.to.use, cov.to.use,
   
   n.fold.used <- length(dat.list.to.use$dfs_for_pscore)
   
-  #### Step 0. biomass_0 and biomass_1 differenced with biomass_start
+  #### Step 0. Adding differenced
   
   #a step to convert the biomass_0 and biomass_1 in *differences*
   #this step may be removed for non-DID methods
@@ -432,34 +432,23 @@ dml.runner.for.didclust.new.baselinestr <- function(dat.list.to.use, cov.to.use,
   #   #   }
   #   #   
   #   # }
+  # # }
+  # 
+  # vars.to.be.differenced <- c("biomass_tminus4", "biomass_tminus5")
+  # 
+  # if (any(vars.to.be.differenced %in% cov.to.use)) {
+  #   for (k in 1:n.fold.used) {
+  #     
+  #     for (var in vars.to.be.differenced) {
+  #       dat.list.to.use$dfs_for_pscore[[paste0("fold.", k)]]$nuisance.fit.data[[paste0(var, "_diff")]] <-(dat.list.to.use$dfs_for_pscore[[paste0("fold.", k)]]$nuisance.fit.data[[var]]- dat.list.to.use$dfs_for_pscore[[paste0("fold.", k)]]$nuisance.fit.data[[baseline.string]])
+  #       
+  #       dat.list.to.use$dfs_for_pscore[[paste0("fold.", k)]]$nuisance.fit.data[[paste0(var, "_diff")]] <-(dat.list.to.use$dfs_for_pscore[[paste0("fold.", k)]]$theta.fit.data[[var]] - dat.list.to.use$dfs_for_pscore[[paste0("fold.", k)]]$theta.fit.data[[baseline.string]])  
+  #     }
+  #     
+  #   }
   # }
   
-  vars.to.be.differenced <- c("biomass_tminus4", "biomass_tminus5")
-  
-  if (any(vars.to.be.differenced %in% cov.to.use)) {
-    for (k in 1:n.fold.used) {
-      
-      for (var in vars.to.be.differenced) {
-        dat.list.to.use$dfs_for_pscore[[paste0("fold.", k)]]$nuisance.fit.data[[paste0(var, "_diff")]] <-(dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data[[var]]- dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data[[baseline.string]])
-        
-        dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data[[var]] <-(dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data[[var]] - dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data[[baseline.string]])  
-      }
-      
-    }
-  }
-  
-
-  
-  for (k in 1:n.fold.used) {
-    
-    dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data <- dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data[complete.cases(dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data),]
-    dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data <- dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data[complete.cases(dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data),]
-    
-  }
-  
-  dat.to.use <- bind_rows(dat.list.to.use$fold.1$nuisance.fit.data,
-                          dat.list.to.use$fold.1$theta.fit.data)
-  #full data - this is where we will be adding the fitted g
+  ## Step 0. Making repositories for propensity scores and other fitted objects =====
   
   psi1.pre.repository <- list()
   phat.repository <- list()
@@ -474,6 +463,29 @@ dml.runner.for.didclust.new.baselinestr <- function(dat.list.to.use, cov.to.use,
   g.and.ellhat.df.repository <- list()
   
   trimmed.N <- 0
+
+  for (k in 1:n.fold.used) {
+    
+    dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data <- dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data[complete.cases(dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data),]
+    dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data <- dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data[complete.cases(dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data),]
+    
+  }
+  
+  
+  
+  ## Step 1. Calculating propensity score =============
+  
+  dat.to.use.for.pscore <- bind_rows(dat.list.to.use$dfs_for_pscore$fold.1$nuisance.fit.data,
+                          dat.list.to.use$dfs_for_pscore$fold.1$theta.fit.data)
+  #full cross-sectional data - this is where we will be adding the fitted g
+  
+  # dat.to.use <- bind_rows(dat.list.to.use$fold.1$nuisance.fit.data,
+  #                         dat.list.to.use$fold.1$theta.fit.data)
+  #full data - this is where we will be adding the fitted g
+  
+  
+  
+  
   
   for (k in 1:n.fold.used) {
     
