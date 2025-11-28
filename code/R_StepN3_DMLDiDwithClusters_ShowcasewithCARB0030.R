@@ -180,8 +180,9 @@ dml.datamaker.for.didclust.new.step1 <- function(proj.df.from.chunk,
   }
   
   dat.to.use %>% 
-    mutate(year.to.treat = as.numeric(Year) - year.of.treat) %>% 
-    relocate(cellID, Year, year.to.treat) -> dat.to.use
+    mutate(year.to.treat = as.numeric(Year) - year.of.treat) %>%
+    mutate(projectID = unique(proj.df.from.chunk$projectID)) %>% 
+    relocate(projectID, cellID, Year, year.to.treat) -> dat.to.use
   
   return(dat.to.use)
   
@@ -383,7 +384,7 @@ table(carb_data_cafr0030_cleaned_list_woclust$dfs_for_pscore$fold.1$nuisance.fit
 
 dml.runner.for.didclust.new.baselinestr <- function(dat.list.to.use, cov.to.use, 
                                                     # outcome.to.use,
-                                                    baseline.string, 
+                                                    # baseline.string, 
                                                     # diff.with.baseline = T, 
                                                     #difference the tminus_5 with baseline results?
                                                     # diff.with.baseline.vars = c("biomass_tminus5"),
@@ -451,7 +452,7 @@ dml.runner.for.didclust.new.baselinestr <- function(dat.list.to.use, cov.to.use,
   ## Step 0. Making repositories for propensity scores and other fitted objects =====
   
   psi1.pre.repository <- list()
-  phat.repository <- list()
+  # phat.repository <- list()
   D.repository <- list()
   #repositories of these two, for calculating asymptotic variance afterwards
   #we need to store them, because we need theta tilde to calculate the variance
@@ -464,238 +465,445 @@ dml.runner.for.didclust.new.baselinestr <- function(dat.list.to.use, cov.to.use,
   
   trimmed.N <- 0
 
-  for (k in 1:n.fold.used) {
-    
-    dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data <- dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data[complete.cases(dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data),]
-    dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data <- dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data[complete.cases(dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data),]
-    
-  }
+  # for (k in 1:n.fold.used) {
+  #   
+  #   dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data <- dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data[complete.cases(dat.list.to.use[[paste0("fold.", k)]]$nuisance.fit.data),]
+  #   dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data <- dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data[complete.cases(dat.list.to.use[[paste0("fold.", k)]]$theta.fit.data),]
+  #   
+  # }
   
   
   
-  ## Step 1. Calculating propensity score =============
-  
+  ## Step 1. Calculating propensity score (once) =============
+  # 
   dat.to.use.for.pscore <- bind_rows(dat.list.to.use$dfs_for_pscore$fold.1$nuisance.fit.data,
                           dat.list.to.use$dfs_for_pscore$fold.1$theta.fit.data)
-  #full cross-sectional data - this is where we will be adding the fitted g
+  # #full cross-sectional data - for reference
   
-  # dat.to.use <- bind_rows(dat.list.to.use$fold.1$nuisance.fit.data,
-  #                         dat.list.to.use$fold.1$theta.fit.data)
-  #full data - this is where we will be adding the fitted g
-  
-  
-  
-  
+  pscore_repository <- list()
   
   for (k in 1:n.fold.used) {
     
-    dat.this.fold <- dat.list.to.use[[paste0("fold.", k)]]
+    crosssectional.dat.this.fold <- dat.list.to.use$dfs_for_pscore[[paste0("fold.", k)]]
+    #
     
-    dat.this.fold.nu <- dat.this.fold$nuisance.fit.data
-    dat.this.fold.th <- dat.this.fold$theta.fit.data
+    crosssectional.dat.this.fold.nu <- crosssectional.dat.this.fold$nuisance.fit.data
+    crosssectional.dat.this.fold.th <- crosssectional.dat.this.fold$theta.fit.data
     
-    dat.this.fold.nu.control <- subset(dat.this.fold.nu, treat == 0)
+    # dat.this.fold.nu.control <- subset(dat.this.fold.nu, treat == 0)
     #subset to control units (for ell hat)
     
-    dat.this.fold.nu.control$outcome.differenced <- dat.this.fold.nu.control[[outcome.to.use]] - dat.this.fold.nu.control[[baseline.string]]
+    # dat.this.fold.nu.control$outcome.differenced <- dat.this.fold.nu.control[[outcome.to.use]] - dat.this.fold.nu.control[[baseline.string]]
     
-    dat.this.fold.th$outcome.differenced <- dat.this.fold.th[[outcome.to.use]] - dat.this.fold.th[[baseline.string]]
+    # dat.this.fold.th$outcome.differenced <- dat.this.fold.th[[outcome.to.use]] - dat.this.fold.th[[baseline.string]]
     
     cov.to.use.temp <- cov.to.use
     
-    for (fc in factor.covs) {
-      if (!all(c(unique(dat.this.fold.nu.control[[fc]]) %in% unique(dat.this.fold.th[[fc]]),
-                 unique(dat.this.fold.th[[fc]]) %in% unique(dat.this.fold.nu.control[[fc]])))) {
-        # print(paste0("REMOVE FC ", fc))
-        
-        cov.to.use.temp <- cov.to.use.temp[-which(cov.to.use.temp %in% fc)]
-        
-        # print(paste0("cov.to.use.temp:", paste(cov.to.use.temp, collapse = ", ")))
-      }
-      #if there is a factor variable that is existent in the theta data but not in the nuisance
-      #just drop the factor variable from the covariate set
-    }
+    # for (fc in factor.covs) {
+    #   if (!all(c(unique(dat.this.fold.nu.control[[fc]]) %in% unique(dat.this.fold.th[[fc]]),
+    #              unique(dat.this.fold.th[[fc]]) %in% unique(dat.this.fold.nu.control[[fc]])))) {
+    #     # print(paste0("REMOVE FC ", fc))
+    #     
+    #     cov.to.use.temp <- cov.to.use.temp[-which(cov.to.use.temp %in% fc)]
+    #     
+    #     # print(paste0("cov.to.use.temp:", paste(cov.to.use.temp, collapse = ", ")))
+    #   }
+    #   #if there is a factor variable that is existent in the theta data but not in the nuisance
+    #   #just drop the factor variable from the covariate set
+    # }
     
     # for (fc in intersect(factor.covs, cov.to.use.temp)) {
     #   dat.this.fold.th[[fc]] <- as.factor(dat.this.fold.th[[fc]])
     #   dat.this.fold.nu[[fc]] <- as.factor(dat.this.fold.nu[[fc]])
     # }
-    # 
-    #### Step 1. Calculating nuisance parameters
+    #
     
-    phat.this.fold <- mean(dat.this.fold.nu$treat)
+    phat.this.fold <- mean(crosssectional.dat.this.fold.nu$treat)
     
     if (g.learner == "classif.rf") {
       #RF classifier
       
-      # ghat.this.fold.model <- forestry(x = data.frame(dat.this.fold.nu[, cov.to.use.temp]), 
-      #                                  y = dat.this.fold.nu$treat,
+      # ghat.this.fold.model <- forestry(x = data.frame(crosssectional.dat.this.fold.nu[, cov.to.use.temp]), 
+      #                                  y = crosssectional.dat.this.fold.nu$treat,
       #                                  ntree = 500,
       #                                  mtry = default.mtry.g, 
       #                                  splitratio = 1)
       
       ghat.this.fold.model <- ranger(treat ~.,
-                                     data = select(dat.this.fold.nu, c("treat",cov.to.use.temp)), 
-                                     num.trees = 500,
+                                     data = select(crosssectional.dat.this.fold.nu, c("treat",cov.to.use.temp)), 
+                                     num.trees = 250,
+                                     #reduce tree size to make it less computationally intensive
                                      min.node.size = 1,
                                      mtry = default.mtry.g, 
                                      classification = F)
       
       ghat.this.fold <- predict(ghat.this.fold.model,
-                                select(dat.this.fold.th, cov.to.use.temp))$predictions
+                                select(crosssectional.dat.this.fold.th, cov.to.use.temp))$predictions
       
       
     } else if (g.learner == "classif.logit") {
       #Logit classifier
       
       ghat.this.fold.model <- glm(treat ~ .,
-                                  data = select(dat.this.fold.nu, c(cov.to.use.temp, "treat")),
+                                  data = select(crosssectional.dat.this.fold.nu, c(cov.to.use.temp, "treat")),
                                   family = "binomial")
       
       ghat.this.fold <- predict(ghat.this.fold.model,
-                                select(dat.this.fold.th, cov.to.use.temp), type = "response")
-      
-      
-    } else if (g.learner == "regr.ols") {
-      #LPM
-      
-      ghat.this.fold.model <- lm(treat ~ .,
-                                 data = select(dat.this.fold.nu, c(cov.to.use.temp, "treat")))
-      
-      ghat.this.fold <- predict(ghat.this.fold.model,
-                                select(dat.this.fold.th, cov.to.use.temp))
+                                select(crosssectional.dat.this.fold.th, cov.to.use.temp), type = "response")
       
       
     }
     
+    crosssectional.dat.this.fold.th$ghat <- ghat.this.fold
     
-    if (m.learner == "regr.rf") {
-      # ellhat.this.fold.model <- forestry(x = data.frame(dat.this.fold.nu.control[, cov.to.use.temp]),
-      #                                    y = dat.this.fold.nu.control[["outcome.differenced"]],
-      #                                    ntree = 500,
-      #                                    mtry = default.mtry.m,
-      #                                    splitratio = 1)
+    crosssectional.dat.this.fold.th$phat <- mean(crosssectional.dat.this.fold.nu$treat)
+    
+    pscore_repository[[paste0("fold.", k)]] <- crosssectional.dat.this.fold.th %>% 
+      ungroup() %>% 
+      select(cellID, ghat, phat, treat)
+    
+    #removed all parts that have to do with calculating theta's and what not
+    
+  }
+  
+  pscore_all <- bind_rows(pscore_repository, .id = "fold")
+  
+  ## Step 2. Calculating outcome model (for individual years) =================
+  
+  years <- names(dat.list.to.use$dfs_for_outcome)
+  
+  all_ell_results <- list()
+  
+  for (ylabel in years) {
+    curr_year_val <- as.numeric(gsub("year.to.treat_", "", ylabel))
+    
+    print(paste0("RUNNING ELLHAT MODEL FOR YEAR ", curr_year_val))
+    
+    this_year_ell <- list()
+    
+    for (k in 1:n.fold.used) {
       
-      ellhat.this.fold.model <- ranger(outcome.differenced ~.,
-                                       data = select(dat.this.fold.nu.control, c("outcome.differenced",cov.to.use.temp)),
-                                       num.trees = 500,
-                                       mtry = default.mtry.m)
+      outcome.thisy.dat.this.fold <- dat.list.to.use$dfs_for_outcome[[ylabel]][[paste0("fold.", k)]]
+      #
       
-      ellhat.this.fold <- predict(ellhat.this.fold.model,
-                                  select(dat.this.fold.th, cov.to.use.temp))$predictions
+      outcome.thisy.dat.this.fold.nu <- outcome.thisy.dat.this.fold$nuisance.fit.data
+      outcome.thisy.dat.this.fold.th <- outcome.thisy.dat.this.fold$theta.fit.data
       
-    } else if (m.learner == "regr.ols") {
-      ellhat.this.fold.model <- lm(y ~.,
-                                   data = select(dat.this.fold.nu.control, c(cov.to.use.temp, y = outcome.differenced)))
+      # dat.this.fold.nu.control <- subset(dat.this.fold.nu, treat == 0)
+      #subset to control units (for ell hat)
       
-      ellhat.this.fold <- predict(ellhat.this.fold.model,
-                                  select(dat.this.fold.th, cov.to.use.temp))
+      # dat.this.fold.nu.control$outcome.differenced <- dat.this.fold.nu.control[[outcome.to.use]] - dat.this.fold.nu.control[[baseline.string]]
+      
+      # dat.this.fold.th$outcome.differenced <- dat.this.fold.th[[outcome.to.use]] - dat.this.fold.th[[baseline.string]]
+      
+      cov.to.use.temp <- cov.to.use
+      
+      # for (fc in factor.covs) {
+      #   if (!all(c(unique(dat.this.fold.nu.control[[fc]]) %in% unique(dat.this.fold.th[[fc]]),
+      #              unique(dat.this.fold.th[[fc]]) %in% unique(dat.this.fold.nu.control[[fc]])))) {
+      #     # print(paste0("REMOVE FC ", fc))
+      #     
+      #     cov.to.use.temp <- cov.to.use.temp[-which(cov.to.use.temp %in% fc)]
+      #     
+      #     # print(paste0("cov.to.use.temp:", paste(cov.to.use.temp, collapse = ", ")))
+      #   }
+      #   #if there is a factor variable that is existent in the theta data but not in the nuisance
+      #   #just drop the factor variable from the covariate set
+      # }
+      
+      # for (fc in intersect(factor.covs, cov.to.use.temp)) {
+      #   dat.this.fold.th[[fc]] <- as.factor(dat.this.fold.th[[fc]])
+      #   dat.this.fold.nu[[fc]] <- as.factor(dat.this.fold.nu[[fc]])
+      # }
+      #
+      
+      outcome.thisy.dat.this.fold.nu$outcome.differenced <- outcome.thisy.dat.this.fold.nu$biomass_tminus2.delta
+      outcome.thisy.dat.this.fold.th$outcome.differenced <- outcome.thisy.dat.this.fold.th$biomass_tminus2.delta
+      #biomass_tminus2.delta = for each cellID-year's biomass, biomass_{cellyear} - biomass_{cell, year = t-2}
+      
+      outcome.thisy.dat.this.fold.nu.control <- subset(outcome.thisy.dat.this.fold.nu, treat ==0)
+      
+      
+      if (m.learner == "regr.rf") {
+        
+        ellhat.this.fold.model <- ranger(outcome.differenced ~.,
+                                         data = select(outcome.thisy.dat.this.fold.nu.control, c("outcome.differenced",cov.to.use.temp)),
+                                         num.trees = 250,
+                                         mtry = default.mtry.m)
+        
+        ellhat.this.fold <- predict(ellhat.this.fold.model,
+                                    select(outcome.thisy.dat.this.fold.th, cov.to.use.temp))$predictions
+        
+      } else if (m.learner == "regr.ols") {
+        ellhat.this.fold.model <- lm(y ~.,
+                                     data = select(outcome.thisy.dat.this.fold.nu.control, c(cov.to.use.temp, y = outcome.differenced)))
+        
+        ellhat.this.fold <- predict(ellhat.this.fold.model,
+                                    select(outcome.thisy.dat.this.fold.th, cov.to.use.temp))
+      }
+      
+      outcome.thisy.dat.this.fold.th$ellhat <- ellhat.this.fold
+      
+      this_year_ell[[paste0("fold.", k)]] <- outcome.thisy.dat.this.fold.th %>% 
+        mutate(year_val = curr_year_val) %>% 
+        ungroup() %>% 
+        select(cellID, year_val, outcome.differenced, ellhat)
+      
+      #removed all parts that have to do with calculating theta's and what not
+      
     }
     
+    this_year_ell_bound <- bind_rows(this_year_ell)
     
-    if ("Year" %in% colnames(dat.to.use)) { # if this is a pooled estimate
-      g.and.ellhat.df.repository[[paste0("fold.", k)]] <- data.frame(cellID = dat.this.fold.th$cellID,
-                                                                     Year = dat.this.fold.th$Year,
-                                                                     ghat = ghat.this.fold,
-                                                                     ellhat = ellhat.this.fold)
-    } else {
-      g.and.ellhat.df.repository[[paste0("fold.", k)]] <- data.frame(cellID = dat.this.fold.th$cellID,
-                                                                     ghat = ghat.this.fold,
-                                                                     ellhat = ellhat.this.fold)
-    }
-    
-    
-    
-    #### Step 1-2. Trimming 
-    
-    if (trim.use) {
-      ghat.this.fold.trimmed <- ghat.this.fold[ghat.this.fold < 0.99 & ghat.this.fold > 0.01]
-      ellhat.this.fold.trimmed <- ellhat.this.fold[ghat.this.fold < 0.99 & ghat.this.fold > 0.01]
-      
-      dat.this.fold.th.trimmed <- dat.this.fold.th[ghat.this.fold < 0.99 & ghat.this.fold > 0.01, ]
-    } else {
-      ghat.this.fold.trimmed <- ghat.this.fold
-      ellhat.this.fold.trimmed <- ellhat.this.fold
-      dat.this.fold.th.trimmed <- dat.this.fold.th
-    }
-    
-    #### Step 2. Calculating theta_k & (prep for) Step 4. Calculating \Sigma_{1k}
-    
-    psi1.pre.this.fold <- (dat.this.fold.th.trimmed$treat - ghat.this.fold.trimmed)/phat.this.fold/(1-ghat.this.fold.trimmed)*(dat.this.fold.th.trimmed$outcome.differenced - ellhat.this.fold.trimmed)
-    
-    psi1.pre.repository[[paste0("fold.", k)]] <- psi1.pre.this.fold
-    
-    thetak.this.fold <- mean(psi1.pre.this.fold)
-    
-    thetak.repository <- c(thetak.repository, thetak.this.fold)
-    
-    phat.repository[[paste0("fold.", k)]] <- mean(dat.this.fold.nu$treat)
-    
-    D.repository[[paste0("fold.", k)]] <- dat.this.fold.th.trimmed$treat
-    
-    trimmed.N <- trimmed.N + nrow(dat.this.fold.th.trimmed)
-    
-    print(paste0("DONE WITH FOLD NO. ", k, "/", n.fold.used))
+    all_ell_results[[ylabel]] <- this_year_ell_bound
     
     
   }
   
-  #### Step 3. Estimating theta tilde, the final point estimate of ATT
+  all_ell_results_bounded <- bind_rows(all_ell_results)
   
-  thetatilde <- mean(thetak.repository)
-  #the final point estimate of ATT
+  pscore_and_ell <- full_join(pscore_all,
+                              all_ell_results_bounded,
+                              by = "cellID")
   
-  #### Step 4. Estimating asymptotic variance
   
-  Sigma1k.repository <- c()
+  ## Step 3. Trimming (if requested) & calculating ATT point estimates (for each fold-year) =========
   
-  for (k in 1:n.fold.used) {
-    psi1.pre.this.fold <- psi1.pre.repository[[paste0("fold.", k)]]
+  if (trim.use) {
+    pscore_and_ell %>% 
+      filter(ghat < 0.99 & ghat > 0.01) -> pscore_and_ell_trimmed
+    # ellhat.this.fold.trimmed <- ellhat.this.fold[ghat.this.fold < 0.99 & ghat.this.fold > 0.01]
     
-    psi1.this.fold <- psi1.pre.this.fold - thetatilde
-    
-    phat.this.fold <- phat.repository[[paste0("fold.", k)]]
-    
-    Ghat.this.fold <- 0-thetatilde/phat.this.fold
-    
-    to.be.meaned <- (psi1.this.fold + Ghat.this.fold*(D.repository[[paste0("fold.", k)]] - phat.this.fold))^2
-    
-    Sigma1k.repository <- c(Sigma1k.repository, mean(to.be.meaned))
-  }
-  
-  
-  sigma2 <- mean(Sigma1k.repository)/trimmed.N
-  
-  if ("Year" %in% colnames(dat.to.use)) { # if this is a pooled estimate
-    dat.to.use.w.fitted <- left_join(dat.to.use,
-                                     bind_rows(g.and.ellhat.df.repository),
-                                     by = c("cellID", "Year"))
+    # dat.this.fold.th.trimmed <- dat.this.fold.th[ghat.this.fold < 0.99 & ghat.this.fold > 0.01, ]
   } else {
-    dat.to.use.w.fitted <- left_join(dat.to.use,
-                                     bind_rows(g.and.ellhat.df.repository),
-                                     by = "cellID")
+    pscore_and_ell_trimmed <- pscore_and_ell
   }
   
+  pscore_and_ell_trimmed_split <- split(pscore_and_ell_trimmed,
+                                        pscore_and_ell_trimmed$year_val)
   
   
-  dat.to.use.w.fitted$proj <- proj.to.look.at
+  for (ylabel in years) {
+    
+    curr_year_val <- as.numeric(gsub("year.to.treat_", "", ylabel))
+    
+    pscore_and_ell_trimmed_df_for_this_y <- subset(pscore_and_ell_trimmed, year_val == curr_year_val)
+    
+    pscore_and_ell_trimmed_df_for_this_y_list <- list()
+    
+    for (k in 1:n.fold.used) {
+      
+      pscore_and_ell_trimmed_df_for_this_y.this.fold <- subset(pscore_and_ell_trimmed_df_for_this_y,
+                                                               fold == paste0("fold.", k))
+      
+      pscore_and_ell_trimmed_df_for_this_y.this.fold$psi1.pre.this.fold <- with(pscore_and_ell_trimmed_df_for_this_y.this.fold,
+                                                                                (treat - ghat)/phat/(1-ghat)*(outcome.differenced - ellhat)) 
+      
+      pscore_and_ell_trimmed_df_for_this_y.this.fold$thetak.this.fold <- mean(pscore_and_ell_trimmed_df_for_this_y.this.fold$psi1.pre.this.fold)
+      
+      # thetak.repository <- c(thetak.repository, thetak.this.fold)
+      
+      pscore_and_ell_trimmed_df_for_this_y_list[[paste0("fold.",k)]] <-  pscore_and_ell_trimmed_df_for_this_y.this.fold
+      
+      print(paste0("DONE WITH FOLD NO. ", k, "/", n.fold.used))
+      
+    }
+    
+    pscore_and_ell_trimmed_df_for_this_y <- bind_rows(pscore_and_ell_trimmed_df_for_this_y_list)
+    
+    pscore_and_ell_trimmed_split[[as.character(curr_year_val)]] <- pscore_and_ell_trimmed_df_for_this_y
+    
+  }
   
-  dat.to.use.w.fitted %>% 
-    relocate(proj) -> dat.to.use.w.fitted
+  pscore_and_ell_trimmed_withpsiandthetak <- bind_rows(pscore_and_ell_trimmed_split)
   
-  # dat.to.use.w.fitted$lon <- unique.cells.data[match(dat.to.use.w.fitted$cellID, unique.cells.data$cellID),]$lon
-  # dat.to.use.w.fitted$lat <- unique.cells.data[match(dat.to.use.w.fitted$cellID, unique.cells.data$cellID),]$lat
+  pscore_and_ell_trimmed_withpsiandthetak %>% 
+    distinct(fold, year_val, .keep_all = T) %>% 
+    select(fold, year_val, thetak.this.fold) -> thetak_repository
   
-  t.stat <- thetatilde/sqrt(sigma2)
+  pscore_and_ell_trimmed_withpsiandthetak %>% 
+    distinct(fold, .keep_all = T) %>% 
+    select(fold, phat) -> phat_repository
   
-  p.val <- 2*pt(t.stat, df = nrow(dat.to.use.w.fitted), lower.tail = t.stat <=0)
+  thetak_repository %>% 
+    group_by(year_val) %>% 
+    summarise(thetatilde = mean(thetak.this.fold)) -> thetatilde_repository
   
-  final.list <- list(df = dat.to.use.w.fitted,
-                     eff = thetatilde,
-                     sigma2 = sigma2,
-                     se = sqrt(sigma2),
-                     p.val = p.val)
+  trimmed.N <- length(unique(pscore_and_ell_trimmed_withpsiandthetak$cellID))
+  
+  
+  ## Step 4. Calculating ATT variance =======
+  
+  pscore_and_ell_trimmed_withpsiandthetak_split <- split(pscore_and_ell_trimmed_withpsiandthetak,
+                                                         pscore_and_ell_trimmed_withpsiandthetak$year_val)
+  
+  for (ylabel in years) {
+    
+    curr_year_val <- as.numeric(gsub("year.to.treat_", "", ylabel))
+    
+    pscore_and_ell_trimmed_withpsiandthetak_for_this_y <- subset(pscore_and_ell_trimmed_withpsiandthetak, 
+                                                                 year_val == curr_year_val)
+    
+    pscore_and_ell_trimmed_withpsiandthetak_for_this_y_list <- list()
+    
+    for (k in 1:n.fold.used) {
+      
+      pscore_and_ell_trimmed_withpsiandthetak_for_this_y.this.fold <- subset(pscore_and_ell_trimmed_withpsiandthetak_for_this_y,
+                                                               fold == paste0("fold.", k))
+      
+      psi1.pre.this.fold <-  pscore_and_ell_trimmed_withpsiandthetak_for_this_y.this.fold$psi1.pre.this.fold
+      
+      psi1.this.fold <- psi1.pre.this.fold - subset(thetatilde_repository, year_val==curr_year_val)$thetatilde
+      
+      phat.this.fold <- subset(phat_repository, fold == paste0("fold.", k))$phat
+      
+      Ghat.this.fold <- 0-subset(thetatilde_repository, year_val==curr_year_val)$thetatilde/phat.this.fold
+      
+      iff.func.this.fold <- psi1.this.fold + Ghat.this.fold*(pscore_and_ell_trimmed_withpsiandthetak_for_this_y.this.fold$treat - phat.this.fold)
+      
+      # to.be.meaned <- iff.func.this.fold^2
+      #the sample mean of this guy is the asymptotic variance of $\sqrt{N}$
+      
+      pscore_and_ell_trimmed_withpsiandthetak_for_this_y.this.fold$iff.this.fold <- iff.func.this.fold
+      
+      pscore_and_ell_trimmed_withpsiandthetak_for_this_y_list[[paste0("fold.", k)]] <- pscore_and_ell_trimmed_withpsiandthetak_for_this_y.this.fold
+    }
+    
+    pscore_and_ell_trimmed_withpsiandthetak_for_this_y <- bind_rows(pscore_and_ell_trimmed_withpsiandthetak_for_this_y_list)
+    
+    
+    pscore_and_ell_trimmed_withpsiandthetak_split[[as.character(curr_year_val)]] <- pscore_and_ell_trimmed_withpsiandthetak_for_this_y
+    
+  }
+  
+  pscore_and_ell_trimmed_withpsiandthetakandiff <- bind_rows(pscore_and_ell_trimmed_withpsiandthetak_split)
+  
+  pscore_and_ell_trimmed_withpsiandthetakandiff %>% 
+    left_join(thetatilde_repository, by = "year_val") %>%
+    rename(att = thetatilde) -> pscore_and_ell_trimmed_withpsiandthetakandiff
+  
+  pscore_and_ell_trimmed_withpsiandthetakandiff %>% 
+    left_join(dat.to.use.for.pscore %>% select(cellID, contains("cluster.")),
+              by = "cellID") %>% 
+    mutate(projectID = unique(dat.to.use.for.pscore$projectID)) %>% 
+    relocate(projectID) -> pscore_and_ell_trimmed_withpsiandthetakandiff
+  
+  pscore_and_ell_trimmed_withpsiandthetakandiff %>% 
+    group_by(projectID, year_val, fold) %>% 
+    summarise(mean_iff2 = mean(iff.this.fold^2) #mean of the iff at this fold = $\hat{\Sigma}_{1k}$
+           ) %>%
+    group_by(projectID, year_val) %>% 
+    summarise(Sigma = mean(mean_iff2)) %>% 
+    left_join(pscore_and_ell_trimmed_withpsiandthetakandiff %>% 
+                group_by(projectID, year_val) %>% 
+                summarise(att = unique(att),
+                          cluster_count = n_distinct(cluster.25km)),
+              by = c("projectID", "year_val")) %>% 
+    mutate(att.se = sqrt(Sigma/cluster_count))-> project_summary
+ 
+  
+  final.list <- list(pscore_and_ell_withIFF = pscore_and_ell_trimmed_withpsiandthetakandiff,
+                     project_summary = project_summary)
   
   return(final.list)
   
 }
+
+# Showcasing usage for CAFR0030 =====
+
+library(did)
+
+carb_data_cafr0030_dmlresult <- dml.runner.for.didclust.new.baselinestr(carb_data_cafr0030_cleaned_list, cov.to.use = cov.wo.clm.forminus,  
+                                        g.learner = "classif.rf", m.learner = "regr.rf", trim.use = T)
+
+lookup_dml_estimator <- function(covariates, ...) {
+  # 1. Unpack values by COLUMN INDEX (Safest)
+  att_vec <- covariates[, 'att']
+  inf_vec <- covariates[, 'iff.this.fold']
+  
+  att <- mean(att_vec[att_vec!=0], na.rm = TRUE)
+  #why drop 0? the compute.att_gt function (which is in the did::att_gt)
+    #has a wonky feature of adding a bunch of zero-ATT rows
+  
+  
+  # 3. Return BOTH names for compatibility
+  # Note: The influence function vector MUST be the same length as the input data
+  return(list(
+    ATT = att,
+    inf.func = inf_vec,
+    att.inf.func = inf_vec
+  ))
+}
+
+carb_data_cafr0030_dml_csapplied <- att_gt(yname = "biomass", tname = "Year", idname = "cellID", 
+                                           gname = "treat.year", 
+                                           data = carb_data_cafr0030_cleaned %>% select(-treat) %>%  left_join(carb_data_cafr0030_dmlresult$pscore_and_ell_withIFF %>% 
+                                                                                                                 select(projectID, cellID, year_val, fold,ghat, phat, treat, outcome.differenced, ellhat, psi1.pre.this.fold, iff.this.fold, att),
+                                                                                                               by = c("projectID", "cellID", "year.to.treat" = "year_val")) %>% 
+                                             left_join(carb_data_cafr0030 %>% distinct(cellID, .keep_all =T) %>% select(cellID, treat.year),
+                                                       by = "cellID") %>% 
+                                             mutate(Year = as.numeric(Year),
+                                                    cellID = as.numeric(cellID)) %>% 
+                                             filter(!is.na(psi1.pre.this.fold) & !is.na(att)),
+                                           xformla = ~ att + iff.this.fold + treat,
+                                           est_method = lookup_dml_estimator,
+                                           anticipation = 1,
+                                           base_period = "universal",
+                                           control_group = "nevertreated",
+                                           #assumed 1-period anticipation
+                                           clustervars = "cluster.25km",
+                                           bstrap = T,
+                                           cband = F,
+                                           panel = T, 
+                                           allow_unbalanced_panel = T)
+# 1. Select ONLY the columns did will use
+cols_for_did <- c("cellID", "Year", "biomass", "treat.year", "cluster.25km", "att", "iff.this.fold")
+
+# 2. Prepare the data with strict cleaning
+analysis_data <- carb_data_cafr0030_cleaned %>% 
+  ungroup() %>%
+  # Join DML Results
+  left_join(carb_data_cafr0030_dmlresult$pscore_and_ell_withIFF %>% 
+              select(projectID, cellID, year_val, att, iff.this.fold), 
+            by = c("projectID", "cellID", "year.to.treat" = "year_val")) %>% 
+  left_join(carb_data_cafr0030 %>% distinct(cellID, .keep_all =T) %>% select(cellID, treat.year),
+            by = "cellID") %>% 
+  mutate(
+    Year = as.numeric(Year),
+    cellID = as.numeric(cellID),
+    treat.year = as.numeric(treat.year),
+    
+    # FILL NAs: DML artifacts must be 0 for rows where DML wasn't run (e.g. far pre-periods)
+    # Otherwise these rows are dropped, potentially killing the pre-trend check
+    att = tidyr::replace_na(att, 0),
+    iff.this.fold = tidyr::replace_na(iff.this.fold, 0),
+    
+    # Ensure Cluster is not NA
+    cluster.25km = tidyr::replace_na(cluster.25km, 0)
+  ) %>%
+  # Keep only complete cases for the variables did uses
+  filter(complete.cases(across(all_of(cols_for_did))))
+
+# 3. DEBUG: STOP if the Control Group is gone
+# If this returns 0, the code above successfully deleted your control group.
+cat("Control Group Rows Remaining:", nrow(analysis_data[analysis_data$treat.year == 0, ]), "\n")
+
+# 4. Run did
+carb_data_cafr0030_dml_csapplied <- att_gt(
+  yname = "biomass", 
+  tname = "Year", 
+  idname = "cellID", 
+  gname = "treat.year", 
+  data = analysis_data,
+  
+  xformla = ~ 0 + att + iff.this.fold,
+  est_method = lookup_dml_estimator,
+  
+  anticipation = 1,
+  clustervars = "cluster.25km",
+  bstrap = FALSE, 
+  cband = FALSE,
+  panel = TRUE, 
+  allow_unbalanced_panel = TRUE
+)
+

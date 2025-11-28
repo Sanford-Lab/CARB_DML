@@ -160,8 +160,61 @@ ggdid(aggte(did.classic.wcovs.allchunk1, type= "dynamic"))
 # factor.covs <- c("fownership", "nlcd", "clm_ned_lf", "forest.group")
 
 
+# Demo example from doubleML documentation =====
 
+time.periods <- 4
+sp <- reset.sim()
+sp$te <- 0
 
+set.seed(1814)
+
+# generate dataset with 4 time periods
+time.periods <- 4
+
+# add dynamic effects
+sp$te.e <- 1:time.periods
+
+# generate data set with these parameters
+# here, we dropped all units who are treated in time period 1 as they do not help us recover ATT(g,t)'s.
+dta <- build_sim_dataset(sp)
+
+# How many observations remained after dropping the ``always-treated'' units
+nrow(dta)
+#This is what the data looks like
+head(dta)
+
+set.seed(1234)
+doubleml_did_linear <- function(y1, y0, D, covariates,
+                                ml_g = lrn("regr.lm"),
+                                ml_m = lrn("classif.log_reg"),
+                                n_folds = 10, n_rep = 1, ...) {
   
+  # warning if n_rep > 1 to handle mapping from psi to inf.func
+  if (n_rep > 1) {
+    warning("n_rep > 1 is not supported.")
+  }
+  # Compute difference in outcomes
+  delta_y <- y1 - y0
+  # Prepare data backend
+  dml_data = DoubleML::double_ml_data_from_matrix(X = covariates, y = delta_y, d = D)
+  # Compute the ATT
+  dml_obj = DoubleML::DoubleMLIRM$new(dml_data, ml_g = ml_g, ml_m = ml_m, score = "ATTE", n_folds = n_folds)
+  dml_obj$fit()
+  att = dml_obj$coef[1]
+  # Return results
+  inf.func <- dml_obj$psi[, 1, 1]
+  output <- list(ATT = att, att.inf.func = inf.func)
+  return(output)
+}
 
+example_attgt_dml_linear <- att_gt(yname = "Y",
+                                   tname = "period",
+                                   idname = "id",
+                                   gname = "G",
+                                   xformla = ~X,
+                                   data = dta,
+                                   est_method = doubleml_did_linear)
+
+
+summary(example_attgt_dml_linear)
 
