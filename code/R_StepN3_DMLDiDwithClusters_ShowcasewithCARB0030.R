@@ -19,10 +19,13 @@ evi.cov.5 <- colnames(carb_data_chunk_1)[which(grepl("evi.*ns.coef|ns.coef*evi",
 cov.wo.clm.forminus <- c("clm_DEM", "clm_ned_lf", "clm_soilCLAY", "clm_soilpH", "clm_soilORGC",
                          "nlcd", 'fownership', "distance.to.road",
                          c(evi.cov.4, evi.cov.5),
-                         'biomass_tminus4', 'biomass_tminus5', 
-                         "forest.group")
+                         'biomass_tminus4', 'biomass_tminus5',
+                         "forest.group"
+                         )
 
-factor.covs <- c("fownership", "nlcd", "clm_ned_lf", "forest.group")
+factor.covs <- c("fownership", "nlcd", "clm_ned_lf",
+                 "forest.group"
+                 )
 
 # Data construction, in two functions =======
 
@@ -499,19 +502,19 @@ dml.runner.for.didclust.new.baselinestr <- function(dat.list.to.use, cov.to.use,
     
     cov.to.use.temp <- cov.to.use
     
-    # for (fc in factor.covs) {
-    #   if (!all(c(unique(dat.this.fold.nu.control[[fc]]) %in% unique(dat.this.fold.th[[fc]]),
-    #              unique(dat.this.fold.th[[fc]]) %in% unique(dat.this.fold.nu.control[[fc]])))) {
-    #     # print(paste0("REMOVE FC ", fc))
-    #     
-    #     cov.to.use.temp <- cov.to.use.temp[-which(cov.to.use.temp %in% fc)]
-    #     
-    #     # print(paste0("cov.to.use.temp:", paste(cov.to.use.temp, collapse = ", ")))
-    #   }
-    #   #if there is a factor variable that is existent in the theta data but not in the nuisance
-    #   #just drop the factor variable from the covariate set
-    # }
-    
+    for (fc in factor.covs) {
+      if (!all(c(unique(subset(crosssectional.dat.this.fold.nu, treat==0)[[fc]]) %in% unique(crosssectional.dat.this.fold.th[[fc]]),
+                 unique(crosssectional.dat.this.fold.th[[fc]]) %in% unique(subset(crosssectional.dat.this.fold.nu, treat==0)[[fc]])))) {
+        # print(paste0("REMOVE FC ", fc))
+
+        cov.to.use.temp <- cov.to.use.temp[-which(cov.to.use.temp %in% fc)]
+
+        # print(paste0("cov.to.use.temp:", paste(cov.to.use.temp, collapse = ", ")))
+      }
+      #if there is a factor variable that is existent in the theta data but not in the nuisance
+      #just drop the factor variable from the covariate set
+    }
+
     # for (fc in intersect(factor.covs, cov.to.use.temp)) {
     #   dat.this.fold.th[[fc]] <- as.factor(dat.this.fold.th[[fc]])
     #   dat.this.fold.nu[[fc]] <- as.factor(dat.this.fold.nu[[fc]])
@@ -535,6 +538,7 @@ dml.runner.for.didclust.new.baselinestr <- function(dat.list.to.use, cov.to.use,
                                      #reduce tree size to make it less computationally intensive
                                      min.node.size = 1,
                                      mtry = default.mtry.g, 
+                                     respect.unordered.factors = 'order',
                                      classification = F)
       
       ghat.this.fold <- predict(ghat.this.fold.model,
@@ -629,6 +633,7 @@ dml.runner.for.didclust.new.baselinestr <- function(dat.list.to.use, cov.to.use,
         ellhat.this.fold.model <- ranger(outcome.differenced ~.,
                                          data = select(outcome.thisy.dat.this.fold.nu.control, c("outcome.differenced",cov.to.use.temp)),
                                          num.trees = 250,
+                                         respect.unordered.factors = 'order',
                                          mtry = default.mtry.m)
         
         ellhat.this.fold <- predict(ellhat.this.fold.model,
@@ -790,7 +795,8 @@ dml.runner.for.didclust.new.baselinestr <- function(dat.list.to.use, cov.to.use,
   
   pscore_and_ell_trimmed_withpsiandthetakandiff %>% 
     group_by(projectID, year_val, fold) %>% 
-    summarise(mean_iff2 = mean(iff.this.fold^2) #mean of the iff at this fold = $\hat{\Sigma}_{1k}$
+    summarise(mean_iff2 = mean(tcrossprod(iff.this.fold), na.rm = T) 
+              #mean of the (iff)(iff') at this fold = $\hat{\Sigma}_{1k} = $
            ) %>%
     group_by(projectID, year_val) %>% 
     summarise(Sigma = mean(mean_iff2)) %>% 
@@ -815,6 +821,11 @@ library(did)
 
 carb_data_cafr0030_dmlresult <- dml.runner.for.didclust.new.baselinestr(carb_data_cafr0030_cleaned_list, cov.to.use = cov.wo.clm.forminus,  
                                         g.learner = "classif.rf", m.learner = "regr.rf", trim.use = T)
+
+save(list = "carb_data_cafr0030_dmlresult",
+     file = "data/output/StepN3_Showcase_CARB0030_Outcome.RData")
+
+load("data/output/StepN3_Showcase_CARB0030_Outcome.RData")
 
 lookup_dml_estimator <- function(covariates, ...) {
   # 1. Unpack values by COLUMN INDEX (Safest)
@@ -856,54 +867,151 @@ carb_data_cafr0030_dml_csapplied <- att_gt(yname = "biomass", tname = "Year", id
                                            cband = F,
                                            panel = T, 
                                            allow_unbalanced_panel = T)
-# 1. Select ONLY the columns did will use
-cols_for_did <- c("cellID", "Year", "biomass", "treat.year", "cluster.25km", "att", "iff.this.fold")
 
-# 2. Prepare the data with strict cleaning
-analysis_data <- carb_data_cafr0030_cleaned %>% 
-  ungroup() %>%
-  # Join DML Results
-  left_join(carb_data_cafr0030_dmlresult$pscore_and_ell_withIFF %>% 
-              select(projectID, cellID, year_val, att, iff.this.fold), 
-            by = c("projectID", "cellID", "year.to.treat" = "year_val")) %>% 
-  left_join(carb_data_cafr0030 %>% distinct(cellID, .keep_all =T) %>% select(cellID, treat.year),
-            by = "cellID") %>% 
-  mutate(
-    Year = as.numeric(Year),
-    cellID = as.numeric(cellID),
-    treat.year = as.numeric(treat.year),
-    
-    # FILL NAs: DML artifacts must be 0 for rows where DML wasn't run (e.g. far pre-periods)
-    # Otherwise these rows are dropped, potentially killing the pre-trend check
-    att = tidyr::replace_na(att, 0),
-    iff.this.fold = tidyr::replace_na(iff.this.fold, 0),
-    
-    # Ensure Cluster is not NA
-    cluster.25km = tidyr::replace_na(cluster.25km, 0)
-  ) %>%
-  # Keep only complete cases for the variables did uses
-  filter(complete.cases(across(all_of(cols_for_did))))
+ggdid(aggte(carb_data_cafr0030_dml_csapplied, type = "dynamic", clustervars = "cluster.25km"))
 
-# 3. DEBUG: STOP if the Control Group is gone
-# If this returns 0, the code above successfully deleted your control group.
-cat("Control Group Rows Remaining:", nrow(analysis_data[analysis_data$treat.year == 0, ]), "\n")
+# Showcasing usage for all projects in chunk 1 =====
 
-# 4. Run did
-carb_data_cafr0030_dml_csapplied <- att_gt(
-  yname = "biomass", 
-  tname = "Year", 
-  idname = "cellID", 
-  gname = "treat.year", 
-  data = analysis_data,
+projects_in_chunk1 <- unique(carb_data_chunk_1$projectID)
+
+chunk1_results_list <- list()
+
+chunk1_results_list[["MLBased"]] <- list()
+
+for (p in projects_in_chunk1) {
   
-  xformla = ~ 0 + att + iff.this.fold,
-  est_method = lookup_dml_estimator,
+  this_p_data <- subset(carb_data_chunk_1, projectID == p)
   
-  anticipation = 1,
-  clustervars = "cluster.25km",
-  bstrap = FALSE, 
-  cband = FALSE,
-  panel = TRUE, 
-  allow_unbalanced_panel = TRUE
-)
+  this_p_data_cleaned <- dml.datamaker.for.didclust.new.step1(this_p_data, 
+                                                                     cov.to.use = cov.wo.clm.forminus,  
+                                                                     nonforest.exclude = T, exclude.treat.pixels = T
+  )
+  
+  this_p_data_cleaned_list <- dml.datamaker.for.didclust.new.step2(dat.to.use = this_p_data_cleaned,
+                                                                          n.fold = 3, 
+                                                                          cluster.use = T,
+                                                                          cluster.cols = "cluster.25km")
+  
+  if (length(this_p_data_cleaned_list$dfs_for_pscore) <3) {
+    print("SKIPPING THIS PROJECT - TREATMENT AREA IS TOO SMALL")
+    
+    next
+  }
+  
+  this_p_data_dmlrun_result <- dml.runner.for.didclust.new.baselinestr(dat.list.to.use = this_p_data_cleaned_list, cov.to.use = cov.wo.clm.forminus,  
+                                                                          g.learner = "classif.rf", m.learner = "regr.rf", trim.use = T)
+  
+  # this_p_data_dmlrunwithOLSLogit_result <- dml.runner.for.didclust.new.baselinestr(dat.list.to.use = this_p_data_cleaned_list, cov.to.use = cov.wo.clm.forminus,  
+  #                                                                      g.learner = "classif.logit", m.learner = "regr.ols", trim.use = T)
+  
+  chunk1_results_list[["MLBased"]][[p]] <- this_p_data_dmlrun_result
+  
+  print(paste0("DONE WITH PROJECT ", p))
+}
+
+save(list = "chunk1_results_list",
+     file = "data/output/StepN3_Showcase_CARB0030andOtherChunk1_Outcome.RData")
+
+chunk1_results_combined <- bind_rows(chunk1_results_list$MLBased %>% 
+                                       map("pscore_and_ell_withIFF") %>%
+                                       bind_rows())
+
+chunk1_results_combined2 <- bind_rows(chunk1_results_list$MLBased[1:2] %>% 
+                                       map("pscore_and_ell_withIFF") %>%
+                                       bind_rows())
+
+carb_data_chunk1_dml_csapplied <- att_gt(yname = "biomass", tname = "Year", 
+                                           idname = "projectID_cellID", 
+                                           gname = "treat.year", 
+                                           data = carb_data_chunk_1 %>% 
+                                           filter(projectID %in% names(chunk1_results_list$MLBased[1:2])) %>% 
+                                             mutate(year.to.treat = as.numeric(Year) - year(DATE.first)) %>% 
+                                             select(-treat) %>%  
+                                             left_join(chunk1_results_combined %>% 
+                                                         filter(projectID %in% names(chunk1_results_list$MLBased[1:2])) %>% 
+                                                         select(projectID, cellID, year_val, fold,ghat, phat, treat, outcome.differenced, ellhat, psi1.pre.this.fold, iff.this.fold, att),
+                                                       by = c("projectID", "cellID", "year.to.treat" = "year_val")) %>%
+                                             mutate(Year = as.numeric(Year),
+                                                    projectID_cellID = dense_rank(paste0(projectID, "-", cellID)),
+                                                    projectID_cluster = dense_rank(paste0(projectID, "-", cluster.25km)),
+                                                    cellID = as.numeric(cellID)) %>% 
+                                             filter(!is.na(psi1.pre.this.fold) & !is.na(att)),
+                                           xformla = ~ att + iff.this.fold,
+                                           est_method = lookup_dml_estimator,
+                                           anticipation = 1,
+                                           base_period = "universal",
+                                           control_group = "nevertreated",
+                                           #assumed 1-period anticipation
+                                           clustervars = "projectID_cluster",
+                                           bstrap = T,
+                                           cband = F,
+                                           panel = T, 
+                                           allow_unbalanced_panel = T)
+
+carb_data_chunk1_proj1_dml_csapplied <- att_gt(yname = "biomass", tname = "Year", 
+                                         idname = "projectID_cellID", 
+                                         gname = "treat.year", 
+                                         data = carb_data_chunk_1 %>% 
+                                           filter(projectID %in% names(chunk1_results_list$MLBased[1])) %>% 
+                                           mutate(year.to.treat = as.numeric(Year) - year(DATE.first)) %>% 
+                                           select(-treat) %>%  
+                                           left_join(chunk1_results_combined %>% 
+                                                       filter(projectID %in% names(chunk1_results_list$MLBased[1])) %>% 
+                                                       select(projectID, cellID, year_val, fold,ghat, phat, treat, outcome.differenced, ellhat, psi1.pre.this.fold, iff.this.fold, att),
+                                                     by = c("projectID", "cellID", "year.to.treat" = "year_val")) %>%
+                                           mutate(Year = as.numeric(Year),
+                                                  projectID_cellID = dense_rank(paste0(projectID, "-", cellID)),
+                                                  projectID_cluster = dense_rank(paste0(projectID, "-", cluster.25km)),
+                                                  cellID = as.numeric(cellID)) %>% 
+                                           filter(!is.na(psi1.pre.this.fold) & !is.na(att)),
+                                         xformla = ~ att + iff.this.fold,
+                                         est_method = lookup_dml_estimator,
+                                         anticipation = 1,
+                                         base_period = "universal",
+                                         control_group = "nevertreated",
+                                         #assumed 1-period anticipation
+                                         clustervars = "projectID_cluster",
+                                         bstrap = T,
+                                         cband = F,
+                                         panel = T, 
+                                         allow_unbalanced_panel = T)
+
+carb_data_chunk1_proj2_dml_csapplied <- att_gt(yname = "biomass", tname = "Year", 
+                                               idname = "projectID_cellID", 
+                                               gname = "treat.year", 
+                                               data = carb_data_chunk_1 %>% 
+                                                 filter(projectID %in% names(chunk1_results_list$MLBased[2])) %>% 
+                                                 mutate(year.to.treat = as.numeric(Year) - year(DATE.first)) %>% 
+                                                 select(-treat) %>%  
+                                                 left_join(chunk1_results_combined %>% 
+                                                             filter(projectID %in% names(chunk1_results_list$MLBased[2])) %>% 
+                                                             select(projectID, cellID, year_val, fold,ghat, phat, treat, outcome.differenced, ellhat, psi1.pre.this.fold, iff.this.fold, att),
+                                                           by = c("projectID", "cellID", "year.to.treat" = "year_val")) %>%
+                                                 mutate(Year = as.numeric(Year),
+                                                        projectID_cellID = dense_rank(paste0(projectID, "-", cellID)),
+                                                        projectID_cluster = dense_rank(paste0(projectID, "-", cluster.25km)),
+                                                        cellID = as.numeric(cellID)) %>% 
+                                                 filter(!is.na(psi1.pre.this.fold) & !is.na(att)),
+                                               xformla = ~ att + iff.this.fold,
+                                               est_method = lookup_dml_estimator,
+                                               anticipation = 1,
+                                               base_period = "universal",
+                                               control_group = "nevertreated",
+                                               #assumed 1-period anticipation
+                                               clustervars = "projectID_cluster",
+                                               bstrap = T,
+                                               cband = F,
+                                               panel = T, 
+                                               allow_unbalanced_panel = T)
+
+first_two_projs <- aggte(carb_data_chunk1_dml_csapplied, type = 'dynamic', na.rm = T)
+first_first_proj <- aggte(carb_data_chunk1_proj1_dml_csapplied, type = 'dynamic', na.rm = T)
+first_second_proj <- aggte(carb_data_chunk1_proj2_dml_csapplied, type = 'dynamic', na.rm = T)
+
+
+ggdid(first_two_projs) + labs(title = "CAFR0001 and CAFR0002, combined via Callaway-Sant'Anna") + ylim(c(-7, 25))
+ggdid(first_first_proj) + labs(title = "CAFR0001")  + ylim(c(-7, 25))
+ggdid(first_second_proj) + labs(title = "CAFR0002") + ylim(c(-7, 25))
+
+
 
