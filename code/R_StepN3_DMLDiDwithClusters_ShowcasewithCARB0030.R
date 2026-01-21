@@ -1,11 +1,12 @@
 library(tidyverse);library(splines);library(tictoc);library(reshape2)
 library(DoubleML);library(mlr3);library(mlr3learners);library(mlr3tuning)
 library(sf);library(paletteer);library(lubridate)
-library(ranger);library(scales);library(DRDID)
+library(ranger);library(scales);library(DRDID);library(Matrix)
 
 # Load data and define some variables =======
 
 load("data/output/StepN2.9_CARBData_LHSwTreatYearsClustersandRHS_chunk1.RData")
+#carb_data_chunk_1
 load("data/output/StepN2.5_SpatialClusters.RData")
 load("data/output/StepN2.5_NonForestAndTreatedPixels.RData")
 
@@ -828,14 +829,19 @@ save(list = "carb_data_cafr0030_dmlresult",
 load("data/output/StepN3_Showcase_CARB0030_Outcome.RData")
 
 lookup_dml_estimator <- function(covariates, ...) {
+  
+  print(head(covariates %>% as_tibble() %>% arrange(abs(att))))
+  print(colnames(covariates))
+  
   # 1. Unpack values by COLUMN INDEX (Safest)
   att_vec <- covariates[, 'att']
   inf_vec <- covariates[, 'iff.this.fold']
   
-  att <- mean(att_vec[att_vec!=0], na.rm = TRUE)
+  # att <- mean(att_vec[att_vec!=0], na.rm = TRUE)
   #why drop 0? the compute.att_gt function (which is in the did::att_gt)
     #has a wonky feature of adding a bunch of zero-ATT rows
   
+  att <- mean(att_vec, na.rm = T)
   
   # 3. Return BOTH names for compatibility
   # Note: The influence function vector MUST be the same length as the input data
@@ -846,17 +852,73 @@ lookup_dml_estimator <- function(covariates, ...) {
   ))
 }
 
+lookup_dml_estimator <- function(covariates, ...) {
+  
+  # 1. Identify the Context (Which Group? Which Time?)
+  #    The 'did' package passes a subset of data for the current (g,t) loop.
+  cov_df  <- as.data.frame(covariates)
+  
+  # Detect the Group (g) and Time (t) from this chunk
+  current_g <- max(cov_df$treat.year, na.rm=TRUE)
+  current_t <- mean(cov_df$Year, na.rm=TRUE)
+  
+  # 2. GLOBAL LOOKUP (The Fix)
+  #    Don't trust 'cov_df$att' (it might be stale/locked).
+  #    Go straight to the source DML object in your Global Environment.
+  
+  #    Filter your DML results for the CURRENT Group and CURRENT Year
+  #    (Assuming 'carb_data_cafr0030_dmlresult' is available globally)
+  
+  relevant_stats <- carb_data_cafr0030_cleaned_withDMLData %>%
+    filter(year.to.treat == current_t)    # The Actual Year (T) - check if this col is Year or Relative Year!
+  # NOTE: If 'year.to.treat' in DML result is relative (e.g., 0, 1, 2), 
+  # you might need: year.to.treat == (current_t - current_g)
+  
+  # 3. Calculate ATT
+  #    Now we have the fresh, time-varying stats for this specific post-treatment year.
+  
+  if(nrow(relevant_stats) > 0) {
+    att <- mean(relevant_stats$att, na.rm = TRUE)
+    
+    # We also need the influence function vector matching the 'covariates' rows
+    # We must match the 'relevant_stats' back to 'cov_df' by cellID to ensure order alignment
+    
+    merged <- cov_df %>%
+      select(cellID) %>%
+      left_join(relevant_stats, by = "cellID")
+    
+    # Handle non-matches (controls or missing)
+    inf_vec <- merged$iff.this.fold
+    inf_vec[is.na(inf_vec)] <- 0
+    
+  } else {
+    # Fallback if no data found for this (g,t) combo
+    att <- 0
+    inf_vec <- rep(0, nrow(cov_df))
+  }
+  
+  return(list(
+    ATT = att,
+    inf.func = inf_vec,
+    att.inf.func = inf_vec
+  ))
+}
+
+carb_data_cafr0030_cleaned_withDMLData <- carb_data_cafr0030_cleaned %>% select(-treat) %>%  left_join(carb_data_cafr0030_dmlresult$pscore_and_ell_withIFF %>% 
+                                                                                                         select(projectID, cellID, year_val, fold,ghat, phat, treat, outcome.differenced, ellhat, psi1.pre.this.fold, iff.this.fold, att),
+                                                                                                       by = c("projectID", "cellID", "year.to.treat" = "year_val")) %>% 
+  left_join(carb_data_cafr0030 %>% distinct(cellID, .keep_all =T) %>% select(cellID, treat.year),
+            by = "cellID") %>% 
+  mutate(Year = as.numeric(Year),
+         cellID = as.numeric(as.factor(cellID))) %>% 
+  mutate(cluster.25km = as.numeric(as.factor(cluster.25km))) %>% 
+  filter(!is.na(psi1.pre.this.fold) & !is.na(att))
+#the last line: for 
+
 carb_data_cafr0030_dml_csapplied <- att_gt(yname = "biomass", tname = "Year", idname = "cellID", 
                                            gname = "treat.year", 
-                                           data = carb_data_cafr0030_cleaned %>% select(-treat) %>%  left_join(carb_data_cafr0030_dmlresult$pscore_and_ell_withIFF %>% 
-                                                                                                                 select(projectID, cellID, year_val, fold,ghat, phat, treat, outcome.differenced, ellhat, psi1.pre.this.fold, iff.this.fold, att),
-                                                                                                               by = c("projectID", "cellID", "year.to.treat" = "year_val")) %>% 
-                                             left_join(carb_data_cafr0030 %>% distinct(cellID, .keep_all =T) %>% select(cellID, treat.year),
-                                                       by = "cellID") %>% 
-                                             mutate(Year = as.numeric(Year),
-                                                    cellID = as.numeric(cellID)) %>% 
-                                             filter(!is.na(psi1.pre.this.fold) & !is.na(att)),
-                                           xformla = ~ att + iff.this.fold + treat,
+                                           data = carb_data_cafr0030_cleaned_withDMLData,
+                                           xformla = ~ 0 + cellID + treat.year + Year + year.to.treat,
                                            est_method = lookup_dml_estimator,
                                            anticipation = 1,
                                            base_period = "universal",
@@ -866,7 +928,7 @@ carb_data_cafr0030_dml_csapplied <- att_gt(yname = "biomass", tname = "Year", id
                                            bstrap = T,
                                            cband = F,
                                            panel = T, 
-                                           allow_unbalanced_panel = T)
+                                           allow_unbalanced_panel = T, faster_mode = F)
 
 ggdid(aggte(carb_data_cafr0030_dml_csapplied, type = "dynamic", clustervars = "cluster.25km"))
 
@@ -916,6 +978,11 @@ chunk1_results_combined <- bind_rows(chunk1_results_list$MLBased %>%
                                        map("pscore_and_ell_withIFF") %>%
                                        bind_rows())
 
+chunk1_results_combined_summary <- bind_rows(chunk1_results_list$MLBased %>% 
+                                       map("project_summary") %>%
+                                       bind_rows())
+
+
 chunk1_results_combined2 <- bind_rows(chunk1_results_list$MLBased[1:2] %>% 
                                        map("pscore_and_ell_withIFF") %>%
                                        bind_rows())
@@ -938,7 +1005,7 @@ carb_data_chunk1_dml_csapplied <- att_gt(yname = "biomass", tname = "Year",
                                              filter(!is.na(psi1.pre.this.fold) & !is.na(att)),
                                            xformla = ~ att + iff.this.fold,
                                            est_method = lookup_dml_estimator,
-                                           anticipation = 1,
+                                           anticipation = 0,
                                            base_period = "universal",
                                            control_group = "nevertreated",
                                            #assumed 1-period anticipation
@@ -1012,6 +1079,153 @@ first_second_proj <- aggte(carb_data_chunk1_proj2_dml_csapplied, type = 'dynamic
 ggdid(first_two_projs) + labs(title = "CAFR0001 and CAFR0002, combined via Callaway-Sant'Anna") + ylim(c(-7, 25))
 ggdid(first_first_proj) + labs(title = "CAFR0001")  + ylim(c(-7, 25))
 ggdid(first_second_proj) + labs(title = "CAFR0002") + ylim(c(-7, 25))
+
+carb_data_chunk_1_first5 <- carb_data_chunk_1 %>% 
+  filter(projectID %in% names(chunk1_results_list$MLBased[1:5])) %>% 
+  mutate(year.to.treat = as.numeric(Year) - year(DATE.first)) %>% 
+  select(-treat) %>%  
+  left_join(chunk1_results_combined %>% 
+              filter(projectID %in% names(chunk1_results_list$MLBased[1:5])) %>% 
+              select(projectID, cellID, year_val, fold,ghat, phat, treat, outcome.differenced, ellhat, psi1.pre.this.fold, iff.this.fold, att),
+            by = c("projectID", "cellID", "year.to.treat" = "year_val")) %>%
+  mutate(Year = as.numeric(Year),
+         projectID_cellID = dense_rank(paste0(projectID, "-", cellID)),
+         projectID_cluster = dense_rank(paste0(projectID, "-", cluster.25km)),
+         cellID = as.numeric(cellID)) %>% 
+  #make sure that their 
+  filter(!is.na(psi1.pre.this.fold) & !is.na(att))
+  #drop all 
+
+carb_data_chunk_1_first <- carb_data_chunk_1 %>% 
+  filter(projectID %in% names(chunk1_results_list$MLBased[1])) %>% 
+  mutate(year.to.treat = as.numeric(Year) - year(DATE.first)) %>% 
+  select(-treat) %>%  
+  left_join(chunk1_results_combined %>% 
+              filter(projectID %in% names(chunk1_results_list$MLBased[1])) %>% 
+              select(projectID, cellID, year_val, fold,ghat, phat, treat, outcome.differenced, ellhat, psi1.pre.this.fold, iff.this.fold, att),
+            by = c("projectID", "cellID", "year.to.treat" = "year_val")) %>%
+  mutate(Year = as.numeric(Year),
+         projectID_cellID = dense_rank(paste0(projectID, "-", cellID)),
+         projectID_cluster = dense_rank(paste0(projectID, "-", cluster.25km)),
+         cellID = as.numeric(cellID)) %>% 
+  #make sure that their 
+  filter(!is.na(psi1.pre.this.fold) & !is.na(att))
+#drop all 
+
+carb_data_chunk_1 %>% filter(Year == 2000) %>%  group_by(projectID, type) %>% summarise(n = n()) -> k
+
+k %>% pivot_wider(id_cols = projectID, names_from = type, values_from = n) %>% mutate(control.v.treated = control.b2k/(control.b2k + exact.treated)) -> k2
+
+carb_data_chunk_1_largeprojs <- carb_data_chunk_1 %>% 
+  filter(projectID %in% subset(k2, control.v.treated < 0.9)$projectID) %>% 
+  #only focus on those with sufficiently large treated pixels
+  mutate(year.to.treat = as.numeric(Year) - year(DATE.first)) %>% 
+  select(-treat) %>%  
+  left_join(chunk1_results_combined %>% 
+              filter(projectID %in% subset(k2, control.v.treated < 0.9)$projectID) %>% 
+              select(projectID, cellID, year_val, fold,ghat, phat, treat, outcome.differenced, ellhat, psi1.pre.this.fold, iff.this.fold, att),
+            by = c("projectID", "cellID", "year.to.treat" = "year_val")) %>%
+  mutate(Year = as.numeric(Year),
+         projectID_cellID = dense_rank(paste0(projectID, "-", cellID)),
+         projectID_cluster = dense_rank(paste0(projectID, "-", cluster.25km)),
+         cellID = as.numeric(cellID)) %>% 
+  filter(!is.na(psi1.pre.this.fold) & !is.na(att))
+#drop all cases where the propensity score-trimmed pixels are dropped
+
+manual_did_inference <- function(dml_data, 
+                                 cluster_var = "cluster.25km", 
+                                 time_var = "year.to.treat", 
+                                 alpha = 0.05, 
+                                 biter = 1000) {
+  
+  # 1. SETUP: Unique Cluster IDs
+  if("projectID" %in% names(dml_data)){
+    dml_data <- dml_data %>%
+      mutate(unique_cluster_id = paste0(projectID, "_", .data[[cluster_var]]))
+  } else {
+    dml_data <- dml_data %>%
+      mutate(unique_cluster_id = as.character(.data[[cluster_var]]))
+  }
+  
+  # 2. POINT ESTIMATES & COUNTS (N_obs)
+  results_table <- dml_data %>%
+    group_by(!!sym(time_var)) %>%
+    summarise(
+      att = mean(att, na.rm = TRUE),
+      n_obs = n(),           # Count of observations (units)
+      n_clusters_t = n_distinct(unique_cluster_id), # Count of clusters
+      .groups = 'drop'
+    ) %>%
+    arrange(!!sym(time_var))
+  
+  # 3. AGGREGATE TO CLUSTER LEVEL (Sum IFFs)
+  cluster_iff <- dml_data %>%
+    group_by(unique_cluster_id, !!sym(time_var)) %>%
+    summarise(psi = sum(iff.this.fold, na.rm = TRUE), .groups = 'drop')
+  
+  # 4. RESHAPE TO WIDE
+  psi_matrix_df <- cluster_iff %>%
+    pivot_wider(names_from = !!sym(time_var), 
+                values_from = psi, 
+                values_fill = 0) 
+  
+  psi_matrix <- as.matrix(psi_matrix_df %>% select(-unique_cluster_id))
+  
+  # Match column order
+  ordered_times <- as.character(results_table[[time_var]])
+  psi_matrix <- psi_matrix[, ordered_times]
+  
+  # 5. CALCULATE STANDARD ERRORS
+  # Formula: SE = sqrt( Sum(Psi_g^2) * (G / G-1) ) / N_obs
+  
+  sum_sq_psi <- colSums(psi_matrix^2)
+  n_clusters <- nrow(psi_matrix)
+  
+  # Finite Sample Adjustment (G / G-1)
+  fpc <- n_clusters / (n_clusters - 1)
+  
+  # Divide by N_obs, not N_clusters
+  se_vec <- sqrt(sum_sq_psi * fpc) / results_table$n_obs 
+  
+  results_table$se <- se_vec
+  
+  # 6. SIMULTANEOUS CONFIDENCE BANDS (Multiplier Bootstrap)
+  weights <- matrix(sample(c(-1, 1), n_clusters * biter, replace = TRUE), 
+                    nrow = n_clusters, ncol = biter)
+  
+  # Bootstrap Means: (Sum(Psi * w) / N_obs)
+  boot_sums <- t(psi_matrix) %*% weights
+  boot_means <- boot_sums / results_table$n_obs
+  
+  # t-statistics
+  se_matrix <- matrix(se_vec, nrow = nrow(boot_means), ncol = ncol(boot_means), byrow = FALSE)
+  t_stat_matrix <- abs(boot_means) / se_matrix
+  
+  # Handle 0/0 for empty years
+  t_stat_matrix[is.nan(t_stat_matrix) | is.infinite(t_stat_matrix)] <- 0
+  
+  t_stats <- apply(t_stat_matrix, 2, max, na.rm = TRUE)
+  crit_val <- quantile(t_stats, 1 - alpha, na.rm = TRUE)
+  
+  # 7. FINALIZE
+  results_table <- results_table %>%
+    mutate(
+      c = crit_val,
+      lower_pointwise = att - qnorm(1 - alpha/2) * se,
+      upper_pointwise = att + qnorm(1 - alpha/2) * se,
+      lower_simul     = att - crit_val * se,
+      upper_simul     = att + crit_val * se
+    )
+  
+  return(results_table)
+}
+
+first_five_projs_attgt <- manual_did_inference(carb_data_chunk_1_first5)
+large_projs_attgt <- manual_did_inference(carb_data_chunk_1_largeprojs)
+first_projs_attgt <- manual_did_inference(carb_data_chunk_1_first)
+
+aggte(first_five_projs_attgt)
+
 
 
 
